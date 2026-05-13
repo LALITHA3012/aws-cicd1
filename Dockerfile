@@ -1,21 +1,55 @@
-# Build stage
-FROM node:22-alpine AS builder
+name: CI/CD Pipeline
 
-WORKDIR /app
+on:
+  push:
+    branches:
+      - main
 
-COPY package*.json ./
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
 
-RUN npm install
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
 
-COPY . .
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-RUN npm run build
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-# Production stage
-FROM nginx:alpine
+      - name: Build Docker Image
+        run: |
+          docker build -t lalithasv/aws-cicd1:${{ github.sha }} .
+          docker tag lalithasv/aws-cicd1:${{ github.sha }} lalithasv/aws-cicd1:latest
 
-COPY --from=builder /app/dist /usr/share/nginx/html
+      - name: Push Docker Images
+        run: |
+          docker push lalithasv/aws-cicd1:${{ github.sha }}
+          docker push lalithasv/aws-cicd1:latest
 
-EXPOSE 80
+  deploy:
+    needs: build-and-push
+    runs-on: self-hosted
 
-CMD ["nginx", "-g", "daemon off;"]
+    steps:
+      - name: Pull Latest Docker Image
+        run: |
+          sudo docker pull lalithasv/aws-cicd1:latest
+
+      - name: Stop Existing Container
+        run: |
+         sudo docker stop aws-cicd-container || true
+         sudo docker rm aws-cicd-container || true
+
+      - name: Run New Container
+        run: |
+          sudo docker run -d \
+            --name aws-cicd-container \
+            -p 80:80 \
+            --restart always \
+            lalithasv/aws-cicd1:latest
